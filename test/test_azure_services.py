@@ -418,59 +418,77 @@ class ServiceTester:
         try:
             import redis
             
-            host = os.getenv("REDIS_HOST")
-            port = int(os.getenv("REDIS_PORT", "6380"))
-            password = os.getenv("REDIS_PASSWORD")
+            connection_string = os.getenv("REDIS_CONNECTION_STRING")
             
-            if not host or not password or password == "PLACEHOLDER":
+            if not connection_string or connection_string == "PLACEHOLDER":
                 self.log_test("Redis Cache", "Configuration Check", "SKIP", 
-                            "Redis credentials not configured")
+                            "Redis connection string not configured")
                 return
             
             self.log_test("Redis Cache", "Configuration Check", "PASS", 
-                         f"Host: {host}:{port}")
+                         "Connection string found")
             
-            # Test connection
-            r = redis.Redis(
-                host=host,
-                port=port,
-                password=password,
-                ssl=True,
-                socket_timeout=5,
-                socket_connect_timeout=5
-            )
-            
-            # Ping test
-            if r.ping():
-                self.log_test("Redis Cache", "Connection Test", "PASS", 
-                             "PING successful")
-            
-            # Set/Get test
-            test_key = "healthcheck_test"
-            test_value = f"test_{int(time.time())}"
-            r.set(test_key, test_value, ex=60)
-            
-            retrieved_value = r.get(test_key)
-            if retrieved_value and retrieved_value.decode() == test_value:
-                self.log_test("Redis Cache", "Read/Write Test", "PASS", 
-                             "SET/GET operations successful")
-            else:
-                self.log_test("Redis Cache", "Read/Write Test", "FAIL", 
-                             "Value mismatch")
-            
-            # Clean up
-            r.delete(test_key)
-            
-            # Get info
-            info = r.info()
-            self.log_test("Redis Cache", "Server Info", "PASS", 
-                         f"Redis version: {info.get('redis_version', 'unknown')}")
+            try:
+                # Parse the connection string format: host:port,password=xxx,ssl=True
+                parts = connection_string.split(',')
+                host_port = parts[0].split(':')
+                host = host_port[0]
+                port = int(host_port[1]) if len(host_port) > 1 else 6380
+                
+                password = None
+                use_ssl = True
+                
+                for part in parts[1:]:
+                    if 'password=' in part.lower():
+                        password = part.split('=', 1)[1]
+                    elif 'ssl=' in part.lower():
+                        use_ssl = part.split('=', 1)[1].lower() in ['true', '1', 'yes']
+                
+                # Test connection
+                r = redis.Redis(
+                    host=host,
+                    port=port,
+                    password=password,
+                    ssl=use_ssl,
+                    socket_timeout=5,
+                    socket_connect_timeout=5
+                )
+                
+                # Ping test
+                if r.ping():
+                    self.log_test("Redis Cache", "Connection Test", "PASS", 
+                                 "PING successful")
+                
+                # Set/Get test
+                test_key = "healthcheck_test"
+                test_value = f"test_{int(time.time())}"
+                r.set(test_key, test_value, ex=60)
+                
+                retrieved_value = r.get(test_key)
+                if retrieved_value and retrieved_value.decode() == test_value:
+                    self.log_test("Redis Cache", "Read/Write Test", "PASS", 
+                                 "SET/GET operations successful")
+                else:
+                    self.log_test("Redis Cache", "Read/Write Test", "FAIL", 
+                                 "Value mismatch")
+                
+                # Clean up
+                r.delete(test_key)
+                
+                # Get info
+                info = r.info()
+                self.log_test("Redis Cache", "Server Info", "PASS", 
+                             f"Redis version: {info.get('redis_version', 'unknown')}")
+                
+            except Exception as e:
+                self.log_test("Redis Cache", "Connection String Parse", "FAIL", 
+                             f"Failed to parse or connect: {str(e)}")
             
         except ImportError:
             self.log_test("Redis Cache", "Python SDK", "FAIL", 
                          "redis package not installed. Run: pip install redis")
         except Exception as e:
-            self.log_test("Redis Cache", "Connection Error", "FAIL", str(e))
+            self.log_test("Redis Cache", "General Error", "FAIL", str(e))
     
     def test_key_vault(self):
         """Test Azure Key Vault"""
@@ -566,9 +584,10 @@ class ServiceTester:
             "SQL_CONNECTION_STRING_3",
             "COSMOS_ENDPOINT",
             "COSMOS_KEY",
-            "REDIS_HOST",
-            "REDIS_PASSWORD",
         ]
+        
+        # Add Redis connection string to required vars
+        required_vars.append("REDIS_CONNECTION_STRING")
         
         optional_vars = [
             "OPENAI_EMBEDDING_ENDPOINT",
